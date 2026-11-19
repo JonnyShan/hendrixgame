@@ -178,6 +178,8 @@ h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,9vw,46px);mar
 .pname input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 .logo.sm{font-size:clamp(44px,13vw,80px);-webkit-text-stroke:3px var(--ink);text-shadow:0 6px 0 var(--ink);margin-bottom:-4px}
 .ghost.sm{font-size:15px;padding:9px 16px}
+.endname{display:flex;flex-direction:column;align-items:center;gap:10px;width:min(320px,100%)}
+.endname .big{font-size:20px;padding:11px 26px}
 #mute{position:fixed;right:max(12px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 12px);font-family:var(--body);font-weight:900;font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:rgba(255,255,255,.85);padding:6px 10px;border-radius:99px;z-index:5}
 .playing #mute{bottom:auto;right:auto;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 48px)}
 @media (prefers-reduced-motion:reduce){#banner{transition:none}.pick,.big,.combo span{transition:none}.hearts svg.pop{animation:none}}
@@ -264,7 +266,6 @@ h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,9vw,46px);mar
   <div class="seg" id="stageSeg" role="group" aria-label="Stage">
     <button data-s="living" class="on" id="stLiving">Living Room</button><button data-s="lounge" id="stLounge">Lounge</button>
   </div>
-  <label class="pname" for="pname"><span>Your name for the leaderboard</span><input id="pname" maxlength="16" autocomplete="nickname" placeholder="Type your name"></label>
   <button class="big" id="btnGo">Find my rival</button>
   <div class="row"><button class="ghost sm" id="btnHow2">How to play</button><button class="ghost sm" id="btnBoard3">Leaderboard</button></div>
 </section>
@@ -297,6 +298,11 @@ h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,9vw,46px);mar
 <section class="screen" id="sEnd" hidden>
   <h2 id="endTitle">You win</h2>
   <p class="tag" id="endSub"></p>
+  <div class="endname" id="endName" hidden>
+    <label class="pname" for="pname"><span>Put your score on the leaderboard</span><input id="pname" maxlength="16" autocomplete="nickname" placeholder="Type your name"></label>
+    <button class="big" id="btnPost">Post my score</button>
+  </div>
+  <p class="tag small" id="postMsg" hidden></p>
   <div class="stats">
     <div><b id="stSplats">0</b><span>Splats</span></div>
     <div><b id="stCombo">-</b><span>Best combo</span></div>
@@ -1239,7 +1245,7 @@ $('btnChange').addEventListener('click',()=>{G.state='select';buildSelect();show
 $('btnNew').addEventListener('click',()=>{G.state='select';buildSelect();show('sSelect');roulette();});
 
 let rivalChar=1,drawT=0,introT=0,koT=0,lastBeat=-1,drawPick=[];
-function startMatch(){
+function startMatch(){pending=null;$('endName').hidden=true;$('postMsg').hidden=true;
   G.stats={splats:0,best:0,bestName:'-'};G.actions=0;G.matchT=0;G.parts=[];G.texts=[];
     $('hint').style.opacity='1';$('hint').textContent='Pull back anywhere and let go to launch';
   const pb=BUBBLES[(Math.random()*BUBBLES.length)|0],ab=BUBBLES[(Math.random()*BUBBLES.length)|0];
@@ -1286,6 +1292,8 @@ let API=false,apiBoard=[],DB=null,USER=null,myId=null,board=[],boardState='loadi
 const LMULT=[1,1.5,2.5];
 function devId(){try{let v=localStorage.getItem('bb-id');if(!v){v=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');localStorage.setItem('bb-id',v);}return v;}catch(e){return 'anon';}}
 function playerName(){const v=($('pname').value||'').trim().slice(0,16);return v||'Player';}
+$('btnPost').addEventListener('click',()=>{const v=($('pname').value||'').trim().slice(0,16);if(!v){$('pname').focus();$('pname').placeholder='Type a name first';return;}try{localStorage.setItem('bb-name',v);}catch(e){}postPending();});
+$('pname').addEventListener('keydown',e=>{if(e.key==='Enter')$('btnPost').click();});
 try{$('pname').value=localStorage.getItem('bb-name')||'';}catch(e){}
 $('pname').addEventListener('change',()=>{try{localStorage.setItem('bb-name',$('pname').value.trim().slice(0,16));}catch(e){}});
 function localStats(){try{return JSON.parse(localStorage.getItem('bb-stats')||'null')||{points:0,wins:0,losses:0,splats:0,streak:0,best:0};}catch(e){return {points:0,wins:0,losses:0,splats:0,streak:0,best:0};}}
@@ -1341,17 +1349,26 @@ function row(rank,avatar,name,r,me){
   d.append(rk,im,nm,wl,pt);return d;
 }
 let saving=false;
+let pending=null;
+function savedName(){try{return (localStorage.getItem('bb-name')||'').trim();}catch(e){return '';}}
+function msg(t){const m=$('postMsg');m.hidden=false;m.textContent=t;}
+async function postPending(){
+  if(!pending)return;const p=pending;pending=null;const name=savedName()||playerName();
+  $('endName').hidden=true;msg('Posting your score...');
+  try{const r=await fetch('./api/scores',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({id:devId(),name},p))});
+    if(!r.ok)throw 0;const j=await r.json();if(Array.isArray(j.scores))apiBoard=j.scores;
+    const rank=apiBoard.findIndex(x=>x.id===devId());
+    msg('Posted as '+name+'.'+(rank>=0?' You are #'+(rank+1)+' on the leaderboard.':''));
+    $('boardNote').textContent='The board shows each player\'s best single match.';}
+  catch(e){msg('Your score could not be posted right now. It is kept on this device.');}
+}
 async function recordResult(won,lives,reads){
   const m=LMULT[G.level];
   const pts=Math.round((won?100+25*lives+10*reads:10*G.stats.splats+5*reads)*m);
   const apply=st=>{st.points=(st.points||0)+pts;st.wins=(st.wins||0)+(won?1:0);st.losses=(st.losses||0)+(won?0:1);st.splats=(st.splats||0)+G.stats.splats;st.streak=won?(st.streak||0)+1:0;st.best=Math.max(st.best||0,st.streak);st.fav=CHARS[G.char].id;st.updatedAt=Date.now();return st;};
   try{localStorage.setItem('bb-stats',JSON.stringify(apply(localStats())));}catch(e){}
-  if(API){
-    try{const r=await fetch('./api/scores',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:devId(),name:playerName(),char:CHARS[G.char].id,points:pts,won:!!won,level:G.level})});
-      if(r.ok){const j=await r.json();if(Array.isArray(j.scores))apiBoard=j.scores;$('boardNote').textContent='Posted as '+playerName()+'. The board shows each player\'s best single match.';}
-      else throw 0;}
-    catch(e){$('boardNote').textContent='Your score could not be posted right now. It is kept on this device.';}
-  }
+  if(API){pending={char:CHARS[G.char].id,points:pts,won:!!won,level:G.level};
+    if(savedName())postPending();else{$('endName').hidden=false;$('postMsg').hidden=true;}}
   if(DB&&myId&&!saving){
     saving=true;
     try{const ref=DB.doc('scores/'+myId);const snap=await ref.get();const cur=snap.exists?snap.data():{};
