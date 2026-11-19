@@ -166,6 +166,10 @@ h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,9vw,46px);mar
 .how3 p{margin:0;display:flex;flex-direction:column;gap:1px;min-width:0}
 .how3 b{font-family:var(--display);font-weight:400;font-size:18px;line-height:1.1}
 .how3 span{font-size:13px;font-weight:700;color:var(--muted)}
+.pname{display:flex;flex-direction:column;gap:4px;width:min(300px,100%);text-align:left}
+.pname span{font-weight:900;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#fff}
+.pname input{font-family:var(--body);font-weight:800;font-size:16px;padding:10px 12px;border-radius:12px;border:3px solid var(--ink);background:#fff;color:var(--ink)}
+.pname input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 #mute{position:fixed;right:max(12px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 12px);font-family:var(--body);font-weight:900;font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:rgba(255,255,255,.85);padding:6px 10px;border-radius:99px;z-index:5}
 .playing #mute{bottom:auto;right:auto;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 48px)}
 @media (prefers-reduced-motion:reduce){#banner{transition:none}.pick,.big,.combo span{transition:none}.hearts svg.pop{animation:none}}
@@ -250,6 +254,7 @@ h2{font-family:var(--display);font-weight:400;font-size:clamp(30px,9vw,46px);mar
   <div class="seg" id="stageSeg" role="group" aria-label="Stage">
     <button data-s="living" class="on" id="stLiving">Living Room</button><button data-s="lounge" id="stLounge">Lounge</button>
   </div>
+  <label class="pname" for="pname"><span>Your name for the leaderboard</span><input id="pname" maxlength="16" autocomplete="nickname" placeholder="Type your name"></label>
   <button class="big" id="btnGo">Find my rival</button>
 </section>
 
@@ -1258,8 +1263,12 @@ function updateFight(dt){
   aiUpdate(G.F[1],G.F[0],dt);
 }
 /* ---------- leaderboard ---------- */
-let DB=null,USER=null,myId=null,board=[],boardState='loading',boardBack='sTitle';
+let API=false,apiBoard=[],DB=null,USER=null,myId=null,board=[],boardState='loading',boardBack='sTitle';
 const LMULT=[1,1.5,2.5];
+function devId(){try{let v=localStorage.getItem('bb-id');if(!v){v=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');localStorage.setItem('bb-id',v);}return v;}catch(e){return 'anon';}}
+function playerName(){const v=($('pname').value||'').trim().slice(0,16);return v||'Player';}
+try{$('pname').value=localStorage.getItem('bb-name')||'';}catch(e){}
+$('pname').addEventListener('change',()=>{try{localStorage.setItem('bb-name',$('pname').value.trim().slice(0,16));}catch(e){}});
 function localStats(){try{return JSON.parse(localStorage.getItem('bb-stats')||'null')||{points:0,wins:0,losses:0,splats:0,streak:0,best:0};}catch(e){return {points:0,wins:0,losses:0,splats:0,streak:0,best:0};}}
 (async()=>{
   try{
@@ -1274,10 +1283,22 @@ function localStats(){try{return JSON.parse(localStorage.getItem('bb-stats')||'n
       }
     }
   }catch(e){}
+  try{
+    const ctl=new AbortController();const to=setTimeout(()=>ctl.abort(),6000);
+    const r=await fetch('./api/scores',{signal:ctl.signal,cache:'no-store'});clearTimeout(to);
+    if(r.ok){const j=await r.json();if(Array.isArray(j.scores)){API=true;apiBoard=j.scores;boardState='api';renderBoard();return;}}
+  }catch(e){}
   boardState='local';renderBoard();
 })();
 async function renderBoard(){
   const el=$('board');if(!el)return;
+  if(boardState==='api'){
+    el.innerHTML='';
+    if(!apiBoard.length){el.innerHTML='<p class="bnote">No scores yet. Finish a match to get on the board.</p>';return;}
+    apiBoard.forEach((r,i)=>{const fav=CHARS.find(c=>c.id===r.char);const me=r.id===devId();
+      el.appendChild(row(i+1,fav?FACES[fav.id]:'',(r.name||'Player')+(me?' (you)':''),{points:r.best,wins:r.wins,losses:Math.max(0,(r.games||0)-(r.wins||0)),sub:(fav?'Best score as '+fav.name:'')},me));});
+    return;
+  }
   if(boardState==='local'){
     const st=localStats();el.innerHTML='';
     const p=document.createElement('p');p.className='bnote';p.textContent='Scores are saved on this device.';el.appendChild(p);
@@ -1295,7 +1316,7 @@ function row(rank,avatar,name,r,me){
   const rk=document.createElement('span');rk.className='rk';rk.textContent=rank;
   const im=document.createElement('img');im.alt='';if(avatar)im.src=avatar;
   const nm=document.createElement('span');nm.className='nm';nm.textContent=name;
-  const sm=document.createElement('small');const fav=CHARS.find(c=>c.id===r.fav);sm.textContent=(fav?'Plays '+fav.name+'. ':'')+'Best streak '+(r.best||0);nm.appendChild(sm);
+  const sm=document.createElement('small');const fav=CHARS.find(c=>c.id===r.fav);sm.textContent=r.sub!=null?r.sub:(fav?'Plays '+fav.name+'. ':'')+'Best streak '+(r.best||0);nm.appendChild(sm);
   const wl=document.createElement('span');wl.className='wl';wl.textContent=(r.wins||0)+'W '+(r.losses||0)+'L';
   const pt=document.createElement('span');pt.className='pt';pt.textContent=(r.points||0).toLocaleString();
   d.append(rk,im,nm,wl,pt);return d;
@@ -1306,6 +1327,12 @@ async function recordResult(won,lives,reads){
   const pts=Math.round((won?100+25*lives+10*reads:10*G.stats.splats+5*reads)*m);
   const apply=st=>{st.points=(st.points||0)+pts;st.wins=(st.wins||0)+(won?1:0);st.losses=(st.losses||0)+(won?0:1);st.splats=(st.splats||0)+G.stats.splats;st.streak=won?(st.streak||0)+1:0;st.best=Math.max(st.best||0,st.streak);st.fav=CHARS[G.char].id;st.updatedAt=Date.now();return st;};
   try{localStorage.setItem('bb-stats',JSON.stringify(apply(localStats())));}catch(e){}
+  if(API){
+    try{const r=await fetch('./api/scores',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:devId(),name:playerName(),char:CHARS[G.char].id,points:pts,won:!!won,level:G.level})});
+      if(r.ok){const j=await r.json();if(Array.isArray(j.scores))apiBoard=j.scores;$('boardNote').textContent='Posted as '+playerName()+'. The board shows each player\'s best single match.';}
+      else throw 0;}
+    catch(e){$('boardNote').textContent='Your score could not be posted right now. It is kept on this device.';}
+  }
   if(DB&&myId&&!saving){
     saving=true;
     try{const ref=DB.doc('scores/'+myId);const snap=await ref.get();const cur=snap.exists?snap.data():{};
@@ -1316,7 +1343,8 @@ async function recordResult(won,lives,reads){
   }
   return pts;
 }
-function openBoard(from){boardBack=from;G.state='board';renderBoard();show('sLeader');}
+function openBoard(from){boardBack=from;G.state='board';renderBoard();show('sLeader');
+  if(API)fetch('./api/scores',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{if(j&&Array.isArray(j.scores)){apiBoard=j.scores;renderBoard();}}).catch(()=>{});}
 $('btnBoard1').addEventListener('click',()=>openBoard('sTitle'));
 $('btnBoard2').addEventListener('click',()=>openBoard('sEnd'));
 $('btnBack').addEventListener('click',()=>{G.state=boardBack==='sEnd'?'end':'title';show(boardBack);});
